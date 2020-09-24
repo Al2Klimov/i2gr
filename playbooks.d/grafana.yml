@@ -1,0 +1,17 @@
+---
+- hosts: YOUR_PREFIX_HERE-helper
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: Packages
+    loop:
+    - https://dl.grafana.com/oss/release/grafana-7.1.5-1.x86_64.rpm
+    yum:
+      name: '{{ item }}'
+  - name: Services
+    loop:
+    - grafana-server
+    service:
+      name: '{{ item }}'
+      state: started
+      enabled: yes

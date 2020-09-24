@@ -1,0 +1,5 @@
+---
+- import_playbook: playbooks.d/icinga2.yml
+- import_playbook: playbooks.d/influx.yml
+- import_playbook: playbooks.d/grafana.yml
+- import_playbook: playbooks.d/monitor.yml

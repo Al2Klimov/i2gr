@@ -1,0 +1,76 @@
+---
+- hosts: YOUR_PREFIX_HERE-helper
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: Packages
+    loop:
+    - https://dl.influxdata.com/influxdb/releases/influxdb-1.8.2.x86_64.rpm
+    - epel-release
+    - python2-pip
+    yum:
+      name: '{{ item }}'
+  - name: python-influxdb
+    pip:
+      name: influxdb
+  - name: Services
+    loop:
+    - influxdb
+    service:
+      name: '{{ item }}'
+      state: started
+      enabled: yes
+  - name: Influx DB
+    influxdb_database:
+      database_name: icinga2
+  - name: Influx user
+    influxdb_user:
+      user_name: icinga2
+      user_password: icinga2
+      grants:
+      - database: icinga2
+        privilege: ALL
+- hosts: 'all:!YOUR_PREFIX_HERE-helper'
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: /etc/icinga2/features-available/influxdb.conf
+    copy:
+      dest: /etc/icinga2/features-available/influxdb.conf
+      content: |
+        object InfluxdbWriter "influxdb" {
+          host = "{{ hostvars['YOUR_PREFIX_HERE-helper'].ansible_default_ipv4.address }}"
+          port = 8086
+          username = "icinga2"
+          password = "icinga2"
+          database = "icinga2"
+          flush_threshold = 1024
+          flush_interval = 10s
+          host_template = {
+            measurement = "$host.check_command$"
+            tags = {
+              hostname = "$host.name$"
+            }
+          }
+          service_template = {
+            measurement = "$service.check_command$"
+            tags = {
+              hostname = "$host.name$"
+              service = "$service.name$"
+            }
+          }
+        }
+    notify: Icinga 2
+  - name: Icinga 2 features
+    loop:
+    - influxdb
+    file:
+      path: '/etc/icinga2/features-enabled/{{ item }}.conf'
+      state: link
+      src: '/etc/icinga2/features-available/{{ item }}.conf'
+    notify: Icinga 2
+  handlers:
+  - name: Icinga 2
+    service:
+      name: icinga2
+      state: reloaded

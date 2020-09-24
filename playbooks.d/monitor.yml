@@ -1,0 +1,89 @@
+---
+- hosts: 'all:!YOUR_PREFIX_HERE-helper'
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: Packages
+    loop:
+    - git
+    yum:
+      name: '{{ item }}'
+  - name: /opt/justintime-plugins
+    git:
+      repo: https://github.com/justintime/nagios-plugins.git
+      dest: /opt/justintime-plugins
+  - name: check_mem.pl
+    file:
+      path: /usr/lib64/nagios/plugins/check_mem.pl
+      state: link
+      src: /opt/justintime-plugins/check_mem/check_mem.pl
+  - name: /etc/icinga2/conf.d/my.conf
+    copy:
+      dest: /etc/icinga2/conf.d/my.conf
+      content: |
+        apply Service "mem" {
+          import "generic-service"
+          check_command = "mem"
+          vars.mem_used = true
+          vars.mem_cache = true
+          vars.mem_warning = 80
+          vars.mem_critical = 90
+          assign where host.name == NodeName
+        }
+        object CheckCommand "justfork" {
+          command = [ "true" ]
+        }
+        apply Service "true-" for (i in range(25000)) {
+          import "generic-service"
+          check_interval = 1m
+          retry_interval = 1m
+          check_command = "justfork"
+          assign where host.name == NodeName
+        }
+        const MaxConcurrentChecks = 1000000
+        template CheckerComponent default {
+          concurrent_checks = 1000000
+        }
+        /*object ApiUser "root" {
+          password = "icinga"
+          permissions = [ "*" ]
+        }*/
+        apply Service "latency" {
+          import "generic-service"
+          check_command = "dummy"
+          vars.dummy_text = () => {
+            var latencies = get_objects(Service).filter(s => !!s.last_check_result).map(s => s.last_check_result.execution_end - s.last_check_result.schedule_start)
+            return if (latencies.len()) { " |latency=" + latencies.reduce((a, b) => a + b) / latencies.len() + "s" } else { " " }
+          }
+          assign where host.name == NodeName
+        }
+        /*apply Service "icinga" {
+          import "generic-service"
+          check_command = "icinga"
+          assign where host.name == NodeName
+        }*/
+    notify: Icinga 2
+  - name: check_interval
+    replace:
+      path: /etc/icinga2/conf.d/templates.conf
+      regexp: '\bcheck_interval = .+'
+      replace: check_interval = 1s
+    notify: Icinga 2
+  - name: retry_interval
+    replace:
+      path: /etc/icinga2/conf.d/templates.conf
+      regexp: '\bretry_interval = .+'
+      replace: retry_interval = 1s
+    notify: Icinga 2
+  - name: load vars.load_percpu
+    blockinfile:
+      path: /etc/icinga2/conf.d/services.conf
+      insertafter: 'apply Service "load" {'
+      block: |
+        vars.load_percpu = true
+    notify: Icinga 2
+  handlers:
+  - name: Icinga 2
+    service:
+      name: icinga2
+      state: restarted

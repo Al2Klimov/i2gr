@@ -1,0 +1,129 @@
+---
+- hosts: YOUR_PREFIX_HERE-helper
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: Docker repo
+    get_url:
+      url: https://download.docker.com/linux/centos/docker-ce.repo
+      dest: /etc/yum.repos.d/docker-ce.repo
+  - name: Packages
+    loop:
+    - epel-release
+    - nginx
+    - git
+    - docker-ce
+    - createrepo
+    yum:
+      name: '{{ item }}'
+  - name: Services
+    loop:
+    - nginx
+    - docker
+    service:
+      name: '{{ item }}'
+      state: started
+      enabled: yes
+  - name: SELinux
+    selinux:
+      state: disabled
+  - name: icinga2.git
+    git:
+      repo: https://github.com/Icinga/icinga2.git
+      bare: yes
+      dest: /var/local/icinga2.git
+  - name: icinga2-*
+    loop:
+    - 105d09c0e
+    - a84187642
+    git:
+      repo: file:///var/local/icinga2.git
+      version: '{{ item }}'
+      dest: '/var/local/icinga2-{{ item }}'
+    register: icinga2
+  - name: Upstream branch
+    loop: '{{ icinga2.results }}'
+    when: item.changed
+    shell: >-
+      set -exo pipefail;
+      cd /var/local/icinga2-{{ item.item }};
+      git branch -f master
+    args:
+      executable: /bin/bash
+  - name: rpm-icinga2.git
+    git:
+      repo: https://git.icinga.com/packaging/rpm-icinga2.git
+      bare: yes
+      dest: /var/local/rpm-icinga2.git
+  - name: rpm-icinga2-*
+    loop: '{{ icinga2.results }}'
+    git:
+      repo: file:///var/local/rpm-icinga2.git
+      dest: '/var/local/rpm-icinga2-{{ item.item }}'
+  - name: chown rpm-icinga2-*
+    loop: '{{ icinga2.results }}'
+    file:
+      path: '/var/local/rpm-icinga2-{{ item.item }}'
+      state: directory
+      recurse: yes
+      owner: '1000'
+      group: '1000'
+  - name: Icinga 2 packages
+    loop: '{{ icinga2.results }}'
+    shell: >-
+      set -exo pipefail;
+      docker run --rm
+      -v /var/local/icinga2-{{ item.item }}/.git:/icinga2.git:ro
+      -v /var/local/rpm-icinga2-{{ item.item }}:/rpm-icinga2
+      -w /rpm-icinga2
+      -e ICINGA_BUILD_PROJECT=icinga2
+      -e ICINGA_BUILD_TYPE=snapshot
+      -e UPSTREAM_GIT_URL=file:///icinga2.git
+      -e ICINGA_BUILD_UPSTREAM_BRANCH=master
+      registry.icinga.com/build-docker/centos/7
+      icinga-build-package
+    args:
+      executable: /bin/bash
+      creates: '/var/local/rpm-icinga2-{{ item.item }}/build/rpmlint-icinga2-bin.log'
+  - name: createrepo
+    loop: '{{ icinga2.results }}'
+    shell: >-
+      set -exo pipefail;
+      createrepo /var/local/rpm-icinga2-{{ item.item }}/build/RPMS/x86_64
+    args:
+      executable: /bin/bash
+      creates: '/var/local/rpm-icinga2-{{ item.item }}/build/RPMS/x86_64/repodata'
+  - name: Serve Icinga 2
+    loop: '{{ icinga2.results }}'
+    file:
+      path: '/usr/share/nginx/html/icinga2-{{ item.item }}'
+      state: link
+      src: '/var/local/rpm-icinga2-{{ item.item }}/build/RPMS'
+- hosts: 'all:!YOUR_PREFIX_HERE-helper'
+  become: yes
+  become_method: sudo
+  vars:
+    icinga2:
+      YOUR_PREFIX_HERE-master1: 105d09c0e
+      YOUR_PREFIX_HERE-master2: a84187642
+  tasks:
+  - name: /etc/yum.repos.d/our.repo
+    copy:
+      dest: /etc/yum.repos.d/our.repo
+      content: |
+        [icinga2]
+        baseurl=http://{{ hostvars['YOUR_PREFIX_HERE-helper'].ansible_default_ipv4.address }}/icinga2-{{ icinga2[inventory_hostname] }}/$basearch
+        enabled=1
+        gpgcheck=0
+  - name: Packages
+    loop:
+    - epel-release
+    - nagios-plugins-all
+    - icinga2
+    yum:
+      name: '{{ item }}'
+  - name: Start Icinga 2
+    service:
+      name: icinga2
+      state: started
+      enabled: yes
