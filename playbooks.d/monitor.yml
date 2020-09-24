@@ -17,6 +17,12 @@
       path: /usr/lib64/nagios/plugins/check_mem.pl
       state: link
       src: /opt/justintime-plugins/check_mem/check_mem.pl
+  - name: /etc/sysconfig/icinga2
+    copy:
+      dest: /etc/sysconfig/icinga2
+      content: |
+        ICINGA2_RLIMIT_FILES=1000000
+    notify: Icinga 2
   - name: /etc/icinga2/conf.d/my.conf
     copy:
       dest: /etc/icinga2/conf.d/my.conf
